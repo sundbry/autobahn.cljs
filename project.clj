@@ -2,7 +2,7 @@
   :description "Clojurescript bindings for autobahn.js"
   :plugins [[lein-cljsbuild "1.0.4"]]
   :dependencies []
-  :src-paths ["src"]
+  :source-paths ["src"]
   :cljsbuild {:builds
               [{:source-paths ["src"]
                 :id :client

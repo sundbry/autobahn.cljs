@@ -1,13 +1,16 @@
 (ns ^{:doc "Autobahn JS interface"}
-  autobahn)
+  sundbry.autobahn)
+
+(def ^:private ab js/autobahn)
 
 (declare change-state)
 
 (defn- autobahn-debug 
   "Enable/disable Autobahn debug logging"
   [wamp-on ws-on]
-	(.debug js/ab "wamp" wamp-on)
-	(.debug js/ab "ws" ws-on))
+	;(.debug js/ab "wamp" wamp-on)
+	;(.debug js/ab "ws" ws-on)
+  )
 
 (defn create 
   "Create a new proxy to a node"
@@ -18,23 +21,27 @@
            :debug-ws true
            :rpc-base-uri nil
            :ws-uri nil
+           :realm "default"
            :state :disconnected ; [:disconnected :connecting :connected :disconnecting]
+           :connection nil
            :session nil}
-          conf)]
+          conf)
+        conn (ab.Connection. (clj->js {:url (:ws-uri instance)
+                                       :realm (:realm instance)}))
+        instance (assoc instance :connection conn)]
+    (set! (.-onopen conn)
+          (fn [session]
+            (change-state instance :connected [session])))
+    (set! (.-onclose conn)
+          (fn [reason details]
+            (change-state instance :disconnected [reason details])))
     (autobahn-debug (boolean (:debug-wamp instance)) (boolean (:debug-ws instance)))
     instance))
 
 (defn- st-connecting
   [proxy args]
-	(.log js/console (str "Connecting to " (:ws-uri proxy)))
-	(.connect js/ab (:ws-uri proxy)
-		; on connect
-		(fn [session]
-			(change-state proxy :connected [session]))
-		; on close
-		(fn [code reason]
-			(change-state proxy :disconnected [code reason])))
-	proxy)
+  (.log js/console (str "Connecting to " (:ws-uri proxy)))
+  (.open (:connection proxy)))
 
 (defn- st-connected 
   [proxy [session]]
@@ -44,12 +51,12 @@
 (defn- st-disconnecting 
   [proxy args]
 	(.log js/console (str "Disconnecting from " (:ws-uri proxy)))
-	(.close (:session proxy))
+	(.close (:connection proxy))
 	proxy)
 
 (defn- st-disconnected 
-  [proxy [code reason]]
-	(.log js/console (str "Disconnected[" code "]: " reason))
+  [proxy [reason details]]
+	(.log js/console (str "Disconnected:" reason ". " details))
 	(assoc proxy :session nil))
 
 (defn- change-state
@@ -103,28 +110,25 @@
   [proxy rpc-route]
 	(str (:rpc-base-uri proxy) rpc-route))
 
-(defn command
-  "Execute a command on the butterbuffet server
-   @param proxy {:session}
-   @param cmd (list function args...)
-   @param cb-success (json-result)
-   @param cb-error (json-error)"
-	([proxy cmd] (command proxy cmd #() default-error-handler))
-	([proxy cmd cb-success] (command proxy cmd cb-success default-error-handler))
-	([proxy cmd cb-success cb-error]
-		(let [sess (:session proxy)]
-			(if (nil? sess)
-				(throw (new js/Error "Not connected"))
-				(.then
-					; exec RPC
-					(let [cmd (if (symbol? cmd) (str cmd) cmd)
-							  cmd (if (string? cmd) (reverse (into '() (.split cmd " "))) cmd)
-								args (into-array (cons (rpc-uri proxy (first cmd))
-                                       (rest cmd)))]
-								;(.call sess (util/rpc-uri proxy cmd))
-						(.apply (.-call sess) sess args))
-					#(cb-success (js->clj %))
-					#(cb-error (parse-json-error %)))))))
+(defn call
+  "Execute an RPC call
+  @param proxy {:session}
+  @param cmd (list function args...)
+  @param cb-success (json-result)
+  @param cb-error (json-error)"
+  ([proxy rpc-route args] (call proxy rpc-route args (constantly nil) default-error-handler))
+  ([proxy rpc-route args cb-success] (call proxy rpc-route args cb-success default-error-handler))
+  ([proxy rpc-route args cb-success cb-error]
+   (let [sess (:session proxy)]
+     (if (nil? sess)
+       (throw (new js/Error "Not connected"))
+       ; exec RPC
+       (let [uri (rpc-uri proxy rpc-route)
+             args (into-array args)
+             call (.call sess uri args)]
+         (.then call
+                #(cb-success (js->clj %))
+                #(cb-error (parse-json-error %))))))))
 
 (def ^:private global-proxy nil)
 (def ^:private connected-continuations (list))
