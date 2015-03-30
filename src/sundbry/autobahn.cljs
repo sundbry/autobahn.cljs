@@ -14,7 +14,6 @@
   (let [instance
         (merge 
           {:debug? true
-           :rpc-base-uri nil
            :ws-uri nil
            :realm "default"
            :connection nil
@@ -62,27 +61,21 @@
 				(.-desc json-error)
 				(str (.-desc json-error) ": " (.-detail json-error)))))
 
-(defn- rpc-uri 
-  "Returns URI to WAMP RPC resource"
-  [proxy rpc-route]
-	(str (:rpc-base-uri proxy) rpc-route))
-
 (defn call
   "Execute an RPC call
   @param proxy {:session}
   @param cmd (list function args...)
   @param cb-success (json-result)
   @param cb-error (json-error)"
-  ([proxy rpc-route args] (call proxy rpc-route args (constantly nil) default-error-handler))
-  ([proxy rpc-route args cb-success] (call proxy rpc-route args cb-success default-error-handler))
-  ([proxy rpc-route args cb-success cb-error]
+  ([proxy rpc-uri args] (call proxy rpc-uri args (constantly nil) default-error-handler))
+  ([proxy rpc-uri args cb-success] (call proxy rpc-uri args cb-success default-error-handler))
+  ([proxy rpc-uri args cb-success cb-error]
    (let [sess @(:session proxy)]
      (if (nil? sess)
        (throw (new js/Error "Not connected"))
        ; exec RPC
-       (let [uri (rpc-uri proxy rpc-route)
-             args (into-array args)
-             call (.call sess uri args)]
+       (let [args (into-array args)
+             call (.call sess rpc-uri args)]
          (.then call
                 #(cb-success (js->clj %))
                 #(cb-error (parse-json-error %))))))))
