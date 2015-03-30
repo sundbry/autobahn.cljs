@@ -3,8 +3,6 @@
 
 (def ^:private ab js/autobahn)
 
-(declare change-state)
-
 (defn- autobahn-debug 
   "Enable/disable Autobahn debug logging"
   [enable?]
@@ -12,85 +10,47 @@
 
 (defn create 
   "Create a new proxy to a node"
-  [conf]
+  [{:keys [on-open on-close debug?] :as conf}]
   (let [instance
         (merge 
           {:debug? true
            :rpc-base-uri nil
            :ws-uri nil
            :realm "default"
-           :state :disconnected ; [:disconnected :connecting :connected :disconnecting]
            :connection nil
-           :session nil}
+           :session (atom nil)
+           :on-open nil
+           :on-close nil}
           conf)
         conn (ab.Connection. (clj->js {:url (:ws-uri instance)
                                        :realm (:realm instance)}))
-        instance (assoc instance :connection conn)]
-    (set! (.-onopen conn)
-          (fn [session]
-            (change-state instance :connected [session])))
-    (set! (.-onclose conn)
-          (fn [reason details]
-            (change-state instance :disconnected [reason details])))
-    (autobahn-debug (boolean (:debug? instance)))
+        instance (assoc instance :connection conn)
+        wrap-on-open (fn [session]
+                       (reset! (:session instance) session)
+                       (when (some? on-open)
+                         (on-open session)))
+        wrap-on-close (fn [reason message]
+                        (reset! (:session instance) nil)  
+                        (when (some? on-close)
+                          (on-close reason message)))]
+    (set! (.-onopen conn) wrap-on-open)
+    (set! (.-onclose conn) wrap-on-close)
+    (autobahn-debug (boolean debug?))
     instance))
 
-(defn- st-connecting
-  [proxy args]
+(defn connect
+  [proxy]
   (.log js/console (str "Connecting to " (:ws-uri proxy)))
   (.open (:connection proxy))
   proxy)
 
-(defn- st-connected 
-  [proxy [session]]
-	(.log js/console "Connected.")
-	(assoc proxy :session session))
-
-(defn- st-disconnecting 
-  [proxy args]
+(defn disconnnect
+  [proxy]
 	(.log js/console (str "Disconnecting from " (:ws-uri proxy)))
 	(.close (:connection proxy))
 	proxy)
 
-(defn- st-disconnected 
-  [proxy [reason details]]
-	(.log js/console (str "Disconnected:" reason ". " details))
-	(assoc proxy :session nil))
-
-(defn- change-state
-  "The transition function"
-	([proxy new-state] (change-state proxy new-state []))
-	([proxy new-state args]
-		(let [state (:state proxy)
-          transition #(assoc proxy :state new-state)
-          hook #((get (:state-actions proxy) new-state) %)]
-			(when (= :disconnected state)
-				(when (= :connecting new-state)
-					(hook (st-connecting (transition) args))))
-			(when (= :connecting state)
-				(when (= :connected new-state)
-					(hook (st-connected (transition) args)))
-				(when (= :disconnected new-state)
-					(hook (st-disconnected (transition) args))))
-			(when (= :connected state)
-				(when (= :disconnecting new-state)
-					(hook (st-disconnecting (transition) args))))
-			(when (= :disconnecting state)
-				(when (= :disconnected new-state)
-					(hook (st-disconnected (transition) args)))))))
-
-;; (proxy (map :state (proxy))) -> proxy
-(defn do-connect 
-  "Connect to host with callbacks"
-  [proxy state-actions]
-	(-> proxy (assoc :state-actions state-actions) (change-state :connecting)))
-
-;; (proxy) -> proxy
-(defn do-disconnect [proxy]
-  "Disconnect from host"
-	(change-state proxy :disconnecting))
-
-(defn default-error-handler 
+(defn- default-error-handler 
   [error]
 	(.log js/console (str "[remote error] " (.-message error))))
 
@@ -101,7 +61,6 @@
 		(if (nil? (.-detail json-error))
 				(.-desc json-error)
 				(str (.-desc json-error) ": " (.-detail json-error)))))
-
 
 (defn- rpc-uri 
   "Returns URI to WAMP RPC resource"
@@ -117,7 +76,7 @@
   ([proxy rpc-route args] (call proxy rpc-route args (constantly nil) default-error-handler))
   ([proxy rpc-route args cb-success] (call proxy rpc-route args cb-success default-error-handler))
   ([proxy rpc-route args cb-success cb-error]
-   (let [sess (:session proxy)]
+   (let [sess @(:session proxy)]
      (if (nil? sess)
        (throw (new js/Error "Not connected"))
        ; exec RPC
@@ -127,52 +86,3 @@
          (.then call
                 #(cb-success (js->clj %))
                 #(cb-error (parse-json-error %))))))))
-
-(def ^:private global-proxy nil)
-(def ^:private connected-continuations (list))
-
-(defn- wait-connected-k
-  "Run a function once connected."
-  [F]
-	(set! connected-continuations (conj connected-continuations F)))
-
-(defn connect 
-  "Create and connect to the global proxy"
-  [conf]
-	(set! global-proxy (create conf))
-	(do-connect global-proxy {
-		:connecting
-			(fn [remote]
-				(set! global-proxy remote))
-		:connected
-			(fn [remote]
-				(set! global-proxy remote)
-				; Run waiting continuations
-				(loop [conts connected-continuations]
-					(when (not (empty? conts))
-							((first conts) global-proxy)
-							(recur (rest conts))))
-				(set! connected-continuations (list)))
-		:disconnecting
-			(fn [remote]
-				(set! global-proxy remote))
-		:disconnected
-			(fn [remote]
-				; Events are unsubscribed automatically on close
-				(set! global-proxy remote)
-				(set! connected-continuations (list)))}))
-
-(defn disconnect []
-	(do-disconnect global-proxy))
-
-;; Apply F with a proxy
-; ((proxy)) -> (F)
-(defn with-proxy [F]
-	(when (= nil global-proxy)
-		(throw (js/Error "Proxy is nil")))
-	(let [state (:state global-proxy)]
-		(if (= :connected state)
-			(F global-proxy)
-			(if (= :connecting state)
-				(wait-connected-k #(F %))
-				(throw (new js/Error "Proxy is disconnected"))))))
