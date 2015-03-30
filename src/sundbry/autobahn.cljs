@@ -7,18 +7,15 @@
 
 (defn- autobahn-debug 
   "Enable/disable Autobahn debug logging"
-  [wamp-on ws-on]
-	;(.debug js/ab "wamp" wamp-on)
-	;(.debug js/ab "ws" ws-on)
-  )
+  [enable?]
+  (set! js/AUTOBAHN_DEBUG enable?))
 
 (defn create 
   "Create a new proxy to a node"
   [conf]
   (let [instance
         (merge 
-          {:debug-wamp true
-           :debug-ws true
+          {:debug? true
            :rpc-base-uri nil
            :ws-uri nil
            :realm "default"
@@ -35,13 +32,14 @@
     (set! (.-onclose conn)
           (fn [reason details]
             (change-state instance :disconnected [reason details])))
-    (autobahn-debug (boolean (:debug-wamp instance)) (boolean (:debug-ws instance)))
+    (autobahn-debug (boolean (:debug? instance)))
     instance))
 
 (defn- st-connecting
   [proxy args]
   (.log js/console (str "Connecting to " (:ws-uri proxy)))
-  (.open (:connection proxy)))
+  (.open (:connection proxy))
+  proxy)
 
 (defn- st-connected 
   [proxy [session]]
