@@ -71,11 +71,27 @@
   ([proxy rpc-uri args cb-success] (call proxy rpc-uri args cb-success default-error-handler))
   ([proxy rpc-uri args cb-success cb-error]
    (let [sess @(:session proxy)]
-     (if (nil? sess)
-       (throw (new js/Error "Not connected"))
-       ; exec RPC
-       (let [args (into-array args)
-             call (.call sess rpc-uri args)]
-         (.then call
-                #(cb-success (js->clj %))
-                #(cb-error (parse-json-error %))))))))
+     (when (nil? sess)
+       (throw (new js/Error "Not connected")))
+     ; exec RPC
+     (let [args (into-array args)
+           call (.call sess rpc-uri args)]
+       (.then call
+              #(cb-success (js->clj %))
+              #(cb-error (parse-json-error %)))))))
+
+(defn subscribe
+  "Subscribe to an event URI"
+  ([proxy event-uri handler-fn] (subscribe proxy event-uri handler-fn (constantly nil) default-error-handler))
+  ([proxy event-uri handler-fn cb-success] (subscribe proxy event-uri handler-fn cb-success default-error-handler))
+  ([proxy event-uri handler-fn cb-success cb-error]
+   (let [sess @(:session proxy)]
+     (when (nil? sess)
+       (throw (new js/Error "Not connected")))
+     (let [sub (.subscribe sess event-uri (fn [args kw-args meta-data]
+                                            (handler-fn (js->clj args)
+                                                        (js->clj kw-args)
+                                                        (js->clj meta-data))))]
+       (.then sub
+              #(cb-success (js->clj %))
+              #(cb-error (parse-json-error %)))))))
