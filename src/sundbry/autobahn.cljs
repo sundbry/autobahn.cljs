@@ -78,8 +78,9 @@
      (when (nil? sess)
        (throw (new js/Error "Not connected")))
      ; exec RPC
-     (let [args (into-array args)
-           call (.call sess rpc-uri args)]
+     (let [call (if (map? args)
+                  (.call sess rpc-uri (js/Array. 0) (clj->js args))
+                  (.call sess rpc-uri (into-array args)))]
        (.then call
               #(cb-success (js->clj %))
               #(cb-error (parse-json-error %)))))))
