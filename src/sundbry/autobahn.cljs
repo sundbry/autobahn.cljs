@@ -1,5 +1,9 @@
 (ns ^{:doc "Autobahn JS interface"}
-  sundbry.autobahn)
+  sundbry.autobahn
+  (:require
+   [cljs.core.async :as async])
+  (:require-macros 
+    [cljs.core.async.macros :refer [go go-loop]]))
 
 (def ^:private ab js/autobahn)
 
@@ -80,6 +84,21 @@
               #(cb-success (js->clj %))
               #(cb-error (parse-json-error %)))))))
 
+(defn call-async
+  "Execute an RPC call using core.async. 
+   Puts the response or an instance of Error on the returned channel."
+  [proxy rpc-uri args]
+  ; TODO buffer response(s), incremental results
+  (let [chan (async/chan)]
+    (call proxy rpc-uri args 
+          (fn [response]
+            (async/put! chan response)
+            (async/close! chan))
+          (fn [error]
+            (async/put! chan error)
+            (async/close! chan)))
+    chan))
+
 (defn subscribe
   "Subscribe to an event URI"
   ([proxy event-uri handler-fn] (subscribe proxy event-uri handler-fn (constantly nil) default-error-handler))
@@ -93,5 +112,45 @@
                                                         (js->clj kw-args)
                                                         (js->clj meta-data))))]
        (.then sub
-              #(cb-success (js->clj %))
+              #(cb-success %)
               #(cb-error (parse-json-error %)))))))
+
+(defn unsubscribe
+  "Unsubscribe from an event URI"
+  [proxy subscription cb-success cb-error]
+  (let [sess @(:session proxy)]
+    (when (nil? sess)
+      (throw (new js/Error "Not connected")))
+    (let [unsub (.unsubscribe sess subscription)]
+      (.then unsub
+             #(cb-success %)
+             #(cb-error (parse-json-error %))))))
+
+(defn subscribe-async
+  "Subscribe to an event URI using core.async.
+   Puts events onto the provided channel.
+   Returns a channel to receive the subscription object, or an Error."
+  [proxy event-uri event-chan]
+  (let [sub-chan (async/chan 1)]
+    (subscribe proxy event-uri
+               (fn [args kw-args meta-data]
+                 (let [data (or kw-args args)]
+                   (async/put! event-chan data)))
+               (fn [subscription]
+                 (async/put! sub-chan subscription)
+                 (async/close! sub-chan))
+               (fn [error]
+                 (async/put! sub-chan error)
+                 (async/close! sub-chan)))))
+
+(defn unsubscribe-async
+  "Unsubscribes from an event URI.
+   Returns a channel that closes on unsubscription, or recieves an Error."
+  [proxy subscription]
+  (let [unsub-chan (async/chan 1)]
+    (unsubscribe proxy subscription
+                 (fn [success]
+                   (async/close! unsub-chan))
+                 (fn [error]
+                   (async/put! unsub-chan error)
+                   (async/close! unsub-chan)))))
