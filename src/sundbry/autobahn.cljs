@@ -71,16 +71,21 @@
   @param cmd (list function args...)
   @param cb-success (json-result)
   @param cb-error (json-error)"
-  ([proxy rpc-uri args] (call proxy rpc-uri args (constantly nil) default-error-handler))
-  ([proxy rpc-uri args cb-success] (call proxy rpc-uri args cb-success default-error-handler))
+  ([proxy rpc-uri args] 
+   (call proxy rpc-uri args (constantly nil) default-error-handler))
+  ([proxy rpc-uri args cb-success] 
+   (call proxy rpc-uri args cb-success default-error-handler))
   ([proxy rpc-uri args cb-success cb-error]
+   (call proxy rpc-uri args cb-success default-error-handler {}))
+  ([proxy rpc-uri args cb-success cb-error options]
    (let [sess @(:session proxy)]
      (when (nil? sess)
        (throw (new js/Error "Not connected")))
      ; exec RPC
-     (let [call (if (map? args)
-                  (.call sess rpc-uri (js/Array. 0) (clj->js args))
-                  (.call sess rpc-uri (into-array args)))]
+     (let [options (clj->js options)
+           call (if (map? args)
+                  (.call sess rpc-uri (js/Array. 0) (clj->js args) options)
+                  (.call sess rpc-uri (into-array args) nil options))]
        (.then call
               #(cb-success (js->clj %))
               #(cb-error (parse-json-error %)))))))
@@ -88,7 +93,7 @@
 (defn call-async
   "Execute an RPC call using core.async. 
    Puts the response or an instance of Error on the returned channel."
-  [proxy rpc-uri args]
+  [proxy rpc-uri args options]
   ; TODO buffer response(s), incremental results
   (let [chan (async/chan)]
     (call proxy rpc-uri args 
@@ -97,7 +102,8 @@
             (async/close! chan))
           (fn [error]
             (async/put! chan error)
-            (async/close! chan)))
+            (async/close! chan))
+          options)
     chan))
 
 (defn subscribe
