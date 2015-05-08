@@ -60,10 +60,7 @@
 (defn- parse-json-error 
   "Returns a javascript Error instance from an Autobahn json error"
   [json-error]
-	(new js/Error
-		(if (nil? (.-detail json-error))
-				(.-desc json-error)
-				(str (.-desc json-error) ": " (.-detail json-error)))))
+	(new js/Error (.-error json-error)))
 
 (defn call
   "Execute an RPC call
