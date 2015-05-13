@@ -69,12 +69,13 @@
   @param cb-success (json-result)
   @param cb-error (json-error)"
   ([proxy rpc-uri args] 
-   (call proxy rpc-uri args (constantly nil) default-error-handler))
-  ([proxy rpc-uri args cb-success] 
-   (call proxy rpc-uri args cb-success default-error-handler))
-  ([proxy rpc-uri args cb-success cb-error]
-   (call proxy rpc-uri args cb-success default-error-handler {}))
-  ([proxy rpc-uri args cb-success cb-error options]
+   (call proxy rpc-uri args {} nil))
+  ([proxy rpc-uri args options] 
+   (call proxy rpc-uri args options nil))
+  ([proxy rpc-uri args options {:keys [success error progress]
+                                :or {success (constantly nil)
+                                     error default-error-handler
+                                     progress nil}}]
    (let [sess @(:session proxy)]
      (when (nil? sess)
        (throw (new js/Error "Not connected")))
@@ -84,8 +85,9 @@
                   (.call sess rpc-uri (js/Array. 0) (clj->js args) options)
                   (.call sess rpc-uri (into-array args) nil options))]
        (.then call
-              #(cb-success (js->clj %))
-              #(cb-error (parse-json-error %)))))))
+              #(success (js->clj %))
+              #(error (parse-json-error %))
+              #(progress (js->clj %)))))))
 
 (defn call-async
   "Execute an RPC call using core.async. 
@@ -93,14 +95,15 @@
   [proxy rpc-uri args options]
   ; TODO buffer response(s), incremental results
   (let [chan (async/chan)]
-    (call proxy rpc-uri args 
-          (fn [response]
-            (async/put! chan response)
-            (async/close! chan))
-          (fn [error]
-            (async/put! chan error)
-            (async/close! chan))
-          options)
+    (call proxy rpc-uri args options
+          {:success (fn [response]
+                      (async/put! chan response)
+                      (async/close! chan))
+           :error (fn [error]
+                    (async/put! chan error)
+                    (async/close! chan))
+           :progress (fn [progress]
+                       (async/put! chan progress))})
     chan))
 
 (defn subscribe
