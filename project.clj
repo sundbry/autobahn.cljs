@@ -1,6 +1,7 @@
-(defproject sundbry/autobahn.cljs "0.1.0-SNAPSHOT"
+(defproject sundbry/autobahn.cljs "0.1.1-SNAPSHOT"
   :description "Clojurescript bindings for autobahn.js"
   :plugins [[lein-cljsbuild "1.0.4"]]
+  :repositories [["snapshots" {:url "http://mises.etheride.com:8081/nexus/content/repositories/snapshots"}]]
   :dependencies []
   :source-paths ["src"]
   :cljsbuild {:builds
